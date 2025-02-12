@@ -9,8 +9,8 @@ use Exception; // a common import
 use ccxt\ExchangeError;
 use ccxt\ArgumentsRequired;
 use ccxt\NotSupported;
-use React\Async;
-use React\Promise\PromiseInterface;
+use \React\Async;
+use \React\Promise\PromiseInterface;
 
 class blofin extends \ccxt\async\blofin {
 
@@ -37,6 +37,14 @@ class blofin extends \ccxt\async\blofin {
                         'swap' => array(
                             'public' => 'wss://openapi.blofin.com/ws/public',
                             'private' => 'wss://openapi.blofin.com/ws/private',
+                        ),
+                    ),
+                ),
+                'test' => array(
+                    'ws' => array(
+                        'swap' => array(
+                            'public' => 'wss://demo-trading-openapi.blofin.com/ws/public',
+                            'private' => 'wss://demo-trading-openapi.blofin.com/ws/private',
                         ),
                     ),
                 ),

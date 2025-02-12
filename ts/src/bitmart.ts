@@ -6,7 +6,7 @@ import { AuthenticationError, ExchangeNotAvailable, OnMaintenance, AccountSuspen
 import { Precise } from './base/Precise.js';
 import { TICK_SIZE, TRUNCATE } from './base/functions/number.js';
 import { sha256 } from './static_dependencies/noble-hashes/sha256.js';
-import type { Int, OrderSide, Balances, OrderType, OHLCV, Order, Str, Trade, Transaction, Ticker, OrderBook, Tickers, Strings, Currency, Market, TransferEntry, Num, TradingFeeInterface, Currencies, IsolatedBorrowRates, IsolatedBorrowRate, Dict, OrderRequest, int, FundingRate, DepositAddress, BorrowInterest, FundingRateHistory, LedgerEntry, FundingHistory } from './base/types.js';
+import type { Int, OrderSide, Balances, OrderType, OHLCV, Order, Str, Trade, Transaction, Ticker, OrderBook, Tickers, Strings, Currency, Market, TransferEntry, Num, TradingFeeInterface, Currencies, IsolatedBorrowRates, IsolatedBorrowRate, Dict, OrderRequest, int, FundingRate, DepositAddress, BorrowInterest, MarketInterface, FundingRateHistory, FundingHistory, LedgerEntry } from './base/types.js';
 
 //  ---------------------------------------------------------------------------
 
@@ -511,7 +511,10 @@ export default class bitmart extends Exchange {
                     '40049': InvalidOrder, // 403, The maximum length of clientOrderId cannot exceed 32
                     '40050': InvalidOrder, // 403, Client OrderId duplicated with existing orders
                 },
-                'broad': {},
+                'broad': {
+                    'You contract account available balance not enough': InsufficientFunds,
+                    'you contract account available balance not enough': InsufficientFunds,
+                },
             },
             'commonCurrencies': {
                 '$GM': 'GOLDMINER',
@@ -528,6 +531,8 @@ export default class bitmart extends Exchange {
                 'defaultNetworks': {
                     'USDT': 'ERC20',
                 },
+                'timeDifference': 0, // the difference between system clock and exchange clock
+                'adjustForTimeDifference': false, // controls the adjustment logic upon instantiation
                 'networks': {
                     'ERC20': 'ERC20',
                     'SOL': 'SOL',
@@ -723,17 +728,20 @@ export default class bitmart extends Exchange {
                         'limit': 200,
                         'daysBack': undefined,
                         'untilDays': 99999,
+                        'symbolRequired': false,
                     },
                     'fetchOrder': {
                         'marginMode': false,
                         'trigger': false,
                         'trailing': false,
+                        'symbolRequired': false,
                     },
                     'fetchOpenOrders': {
                         'marginMode': true,
                         'limit': 200,
                         'trigger': false,
                         'trailing': false,
+                        'symbolRequired': false,
                     },
                     'fetchOrders': undefined,
                     'fetchClosedOrders': {
@@ -744,6 +752,7 @@ export default class bitmart extends Exchange {
                         'untilDays': undefined,
                         'trigger': false,
                         'trailing': false,
+                        'symbolRequired': false,
                     },
                     'fetchOHLCV': {
                         'limit': 1000, // variable timespans for recent endpoint, 200 for historical
@@ -924,7 +933,7 @@ export default class bitmart extends Exchange {
         };
     }
 
-    async fetchSpotMarkets (params = {}) {
+    async fetchSpotMarkets (params = {}): Promise<MarketInterface[]> {
         const response = await this.publicGetSpotV1SymbolsDetails (params);
         //
         //     {
@@ -955,6 +964,7 @@ export default class bitmart extends Exchange {
         const data = this.safeDict (response, 'data', {});
         const symbols = this.safeList (data, 'symbols', []);
         const result = [];
+        const fees = this.fees['trading'];
         for (let i = 0; i < symbols.length; i++) {
             const market = symbols[i];
             const id = this.safeString (market, 'symbol');
@@ -968,7 +978,7 @@ export default class bitmart extends Exchange {
             const minSellCost = this.safeString (market, 'min_sell_amount');
             const minCost = Precise.stringMax (minBuyCost, minSellCost);
             const baseMinSize = this.safeNumber (market, 'base_min_size');
-            result.push ({
+            result.push (this.safeMarketStructure ({
                 'id': id,
                 'numericId': numericId,
                 'symbol': symbol,
@@ -993,6 +1003,8 @@ export default class bitmart extends Exchange {
                 'expiryDatetime': undefined,
                 'strike': undefined,
                 'optionType': undefined,
+                'maker': fees['maker'],
+                'taker': fees['taker'],
                 'precision': {
                     'amount': baseMinSize,
                     'price': this.parseNumber (this.parsePrecision (this.safeString (market, 'price_max_precision'))),
@@ -1017,12 +1029,12 @@ export default class bitmart extends Exchange {
                 },
                 'created': undefined,
                 'info': market,
-            });
+            }));
         }
         return result;
     }
 
-    async fetchContractMarkets (params = {}) {
+    async fetchContractMarkets (params = {}): Promise<MarketInterface[]> {
         const response = await this.publicGetContractPublicDetails (params);
         //
         //     {
@@ -1066,6 +1078,7 @@ export default class bitmart extends Exchange {
         const data = this.safeDict (response, 'data', {});
         const symbols = this.safeList (data, 'symbols', []);
         const result = [];
+        const fees = this.fees['trading'];
         for (let i = 0; i < symbols.length; i++) {
             const market = symbols[i];
             const id = this.safeString (market, 'symbol');
@@ -1083,7 +1096,7 @@ export default class bitmart extends Exchange {
             if (!isFutures && (expiry === 0)) {
                 expiry = undefined;
             }
-            result.push ({
+            result.push (this.safeMarketStructure ({
                 'id': id,
                 'numericId': undefined,
                 'symbol': symbol,
@@ -1108,6 +1121,8 @@ export default class bitmart extends Exchange {
                 'expiryDatetime': this.iso8601 (expiry),
                 'strike': undefined,
                 'optionType': undefined,
+                'maker': fees['maker'],
+                'taker': fees['taker'],
                 'precision': {
                     'amount': this.safeNumber (market, 'vol_precision'),
                     'price': this.safeNumber (market, 'price_precision'),
@@ -1132,7 +1147,7 @@ export default class bitmart extends Exchange {
                 },
                 'created': this.safeInteger (market, 'open_timestamp'),
                 'info': market,
-            });
+            }));
         }
         return result;
     }
@@ -1146,6 +1161,9 @@ export default class bitmart extends Exchange {
      * @returns {object[]} an array of objects representing market data
      */
     async fetchMarkets (params = {}): Promise<Market[]> {
+        if (this.options['adjustForTimeDifference']) {
+            await this.loadTimeDifference ();
+        }
         const spot = await this.fetchSpotMarkets (params);
         const contract = await this.fetchContractMarkets (params);
         return this.arrayConcat (spot, contract);
@@ -3096,7 +3114,7 @@ export default class bitmart extends Exchange {
      * @param {string[]} [params.clientOrderIds] client order ids
      * @returns {object} an list of [order structures]{@link https://docs.ccxt.com/#/?id=order-structure}
      */
-    async cancelOrders (ids: string[], symbol: Str = undefined, params = {}) {
+    async cancelOrders (ids: string[], symbol: Str = undefined, params = {}): Promise<Order[]> {
         if (symbol === undefined) {
             throw new ArgumentsRequired (this.id + ' cancelOrders() requires a symbol argument');
         }
@@ -3575,8 +3593,9 @@ export default class bitmart extends Exchange {
     async fetchDepositAddress (code: string, params = {}): Promise<DepositAddress> {
         await this.loadMarkets ();
         const currency = this.currency (code);
+        const currencyId = currency['id'];
         const request: Dict = {
-            'currency': currency['id'],
+            'currency': currencyId,
         };
         if (code === 'USDT') {
             const defaultNetworks = this.safeValue (this.options, 'defaultNetworks');
@@ -3585,8 +3604,14 @@ export default class bitmart extends Exchange {
             let networkInner = this.safeStringUpper (params, 'network', defaultNetwork); // this line allows the user to specify either ERC20 or ETH
             networkInner = this.safeString (networks, networkInner, networkInner); // handle ERC20>ETH alias
             if (networkInner !== undefined) {
-                request['currency'] = request['currency'] + '-' + networkInner; // when network the currency need to be changed to currency + '-' + network https://developer-pro.bitmart.com/en/account/withdraw_apply.html on the end of page
+                request['currency'] = currencyId + '-' + networkInner; // when network the currency need to be changed to currency + '-' + network https://developer-pro.bitmart.com/en/account/withdraw_apply.html on the end of page
                 params = this.omit (params, 'network');
+            }
+        } else {
+            let networkCode = undefined;
+            [ networkCode, params ] = this.handleNetworkCodeAndParams (params);
+            if (networkCode !== undefined) {
+                request['currency'] = currencyId + '-' + this.networkCodeToId (networkCode);
             }
         }
         const response = await this.privateGetAccountV1DepositAddress (this.extend (request, params));
@@ -3719,7 +3744,7 @@ export default class bitmart extends Exchange {
             let network = this.safeStringUpper (params, 'network', defaultNetwork); // this line allows the user to specify either ERC20 or ETH
             network = this.safeString (networks, network, network); // handle ERC20>ETH alias
             if (network !== undefined) {
-                request['currency'] += '-' + network; // when network the currency need to be changed to currency + '-' + network https://developer-pro.bitmart.com/en/account/withdraw_apply.html on the end of page
+                request['currency'] = request['currency'] + '-' + network; // when network the currency need to be changed to currency + '-' + network https://developer-pro.bitmart.com/en/account/withdraw_apply.html on the end of page
                 currency['code'] = request['currency']; // update currency code to filter
                 params = this.omit (params, 'network');
             }
@@ -4622,7 +4647,7 @@ export default class bitmart extends Exchange {
      * @description fetches historical funding rate prices
      * @see https://developer-pro.bitmart.com/en/futuresv2/#get-funding-rate-history
      * @param {string} symbol unified symbol of the market to fetch the funding rate history for
-     * @param {int} [since] timestamp in ms of the earliest funding rate to fetch
+     * @param {int} [since] not sent to exchange api, exchange api always returns the most recent data, only used to filter exchange response
      * @param {int} [limit] the maximum amount of funding rate structures to fetch
      * @param {object} [params] extra parameters specific to the exchange API endpoint
      * @returns {object[]} a list of [funding rate structures]{@link https://docs.ccxt.com/#/?id=funding-rate-history-structure}
@@ -5310,7 +5335,7 @@ export default class bitmart extends Exchange {
     }
 
     nonce () {
-        return this.milliseconds ();
+        return this.milliseconds () - this.options['timeDifference'];
     }
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
@@ -5331,7 +5356,7 @@ export default class bitmart extends Exchange {
         }
         if (api === 'private') {
             this.checkRequiredCredentials ();
-            const timestamp = this.milliseconds ().toString ();
+            const timestamp = this.nonce ().toString ();
             const brokerId = this.safeString (this.options, 'brokerId', 'CCXTxBitmart000');
             headers = {
                 'X-BM-KEY': this.apiKey,
@@ -5361,6 +5386,7 @@ export default class bitmart extends Exchange {
         //     {"message":"Bad Request [from is empty]","code":50000,"trace":"579986f7-c93a-4559-926b-06ba9fa79d76","data":{}}
         //     {"message":"Kline size over 500","code":50004,"trace":"d625caa8-e8ca-4bd2-b77c-958776965819","data":{}}
         //     {"message":"Balance not enough","code":50020,"trace":"7c709d6a-3292-462c-98c5-32362540aeef","data":{}}
+        //     {"code":40012,"message":"You contract account available balance not enough.","trace":"..."}
         //
         // contract
         //
@@ -5372,10 +5398,10 @@ export default class bitmart extends Exchange {
         const isErrorCode = (errorCode !== undefined) && (errorCode !== '1000');
         if (isErrorCode || isErrorMessage) {
             const feedback = this.id + ' ' + body;
-            this.throwExactlyMatchedException (this.exceptions['exact'], errorCode, feedback);
-            this.throwBroadlyMatchedException (this.exceptions['broad'], errorCode, feedback);
             this.throwExactlyMatchedException (this.exceptions['exact'], message, feedback);
             this.throwBroadlyMatchedException (this.exceptions['broad'], message, feedback);
+            this.throwExactlyMatchedException (this.exceptions['exact'], errorCode, feedback);
+            this.throwBroadlyMatchedException (this.exceptions['broad'], errorCode, feedback);
             throw new ExchangeError (feedback); // unknown message
         }
         return undefined;

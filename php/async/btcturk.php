@@ -10,8 +10,8 @@ use ccxt\async\abstract\btcturk as Exchange;
 use ccxt\ExchangeError;
 use ccxt\BadRequest;
 use ccxt\Precise;
-use React\Async;
-use React\Promise\PromiseInterface;
+use \React\Async;
+use \React\Promise\PromiseInterface;
 
 class btcturk extends Exchange {
 
@@ -163,6 +163,7 @@ class btcturk extends Exchange {
                         'limit' => 100,
                         'daysBack' => 100000,
                         'untilDays' => 30,
+                        'symbolRequired' => true,
                     ),
                     'fetchOrder' => null,
                     'fetchOpenOrders' => array(
@@ -170,6 +171,7 @@ class btcturk extends Exchange {
                         'limit' => null,
                         'trigger' => false,
                         'trailing' => false,
+                        'symbolRequired' => true,
                     ),
                     'fetchOrders' => array(
                         'marginMode' => false,
@@ -178,6 +180,7 @@ class btcturk extends Exchange {
                         'untilDays' => 30,
                         'trigger' => false,
                         'trailing' => false,
+                        'symbolRequired' => true,
                     ),
                     'fetchClosedOrders' => null,
                     'fetchOHLCV' => array(
